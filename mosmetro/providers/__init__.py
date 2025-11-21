@@ -1,15 +1,15 @@
-from requests import Response
-from typing import Union
+from httpx import Response, AsyncClient
 from .base import Provider
-from .mosmetro import *
-from ..utils import all_subclasses
+from .mosmetro import AuthWifiRu, AuthWifiRuMsk, AuthWifiRuSpb
+
+AVAILABLE_PROVIDERS = [AuthWifiRu, AuthWifiRuMsk, AuthWifiRuSpb]
 
 
-def match(response: Response) -> Union[Provider, None]:
-    for subcls in all_subclasses(Provider):
+def match(client: AsyncClient, response: Response) -> Provider | None:
+    for subcls in AVAILABLE_PROVIDERS:
         try:
             if subcls.match(response):
-                return subcls(response)
+                return subcls(client, response)
         except Exception:
             pass
 

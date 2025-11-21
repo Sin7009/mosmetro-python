@@ -1,38 +1,60 @@
 import sys
-from datetime import datetime
+import logging
+import asyncio
+from httpx import AsyncClient
+from user_agent import generate_user_agent
 
 from . import __version__
 from .gen204 import Gen204
-from .providers import Provider
-from .utils import all_subclasses
+from .providers import AVAILABLE_PROVIDERS
 from .connect import connect
+from .config import settings
 
 
-def main():
-    print(datetime.now())
-    print(f'Version: {__version__}')
+async def main():
+    logging.basicConfig(
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        level=logging.INFO
+    )
 
-    print('Loaded providers: ' +
-          ', '.join(p.__name__ for p in all_subclasses(Provider)))
+    logging.info(f'Version: {__version__}')
 
-    print('Checking connection...')
-    res204 = Gen204.check()
+    logging.info('Loaded providers: ' +
+          ', '.join(p.__name__ for p in AVAILABLE_PROVIDERS))
 
-    if res204.is_connected:
-        print('Already connected')
-        sys.exit(0)
+    # Use AsyncClient
+    async with AsyncClient(verify=False) as client:
+        client.headers['user-agent'] = generate_user_agent()
 
-    if not res204.response:
-        print('Error: Unable to get initial redirect')
-        sys.exit(1)
+        # Optional: User-Agent rotation logic could be added here or in a loop if we had a daemon mode.
+        # For a single run, one UA is fine, but the instructions said: "Rotate User-Agent... if session lives long".
+        # Since this script seems to run once and exit, generating one at start is fine.
+        # But if we want to be robust, we can regenerate it if we retry?
+        # The retry logic is in `connect`.
+        # To implement UA rotation on retry, we would need to hook into the retry mechanism or just regenerate it before `connect`.
 
-    if connect(res204.response):
-        print("Connected successfully! :3")
-        sys.exit(0)
-    else:
-        print("Connection failed :(")
-        sys.exit(1)
+        logging.info('Checking connection...')
+        res204 = await Gen204.check(client)
+
+        if res204.is_connected:
+            logging.info('Already connected')
+            sys.exit(0)
+
+        if not res204.response:
+            logging.error('Error: Unable to get initial redirect')
+            sys.exit(1)
+
+        try:
+            if await connect(client, res204.response):
+                logging.info("Connected successfully! :3")
+                sys.exit(0)
+            else:
+                logging.info("Connection failed :(")
+                sys.exit(1)
+        except Exception as e:
+             logging.error(f"Connection process failed with error: {e}")
+             sys.exit(1)
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
