@@ -1,22 +1,24 @@
-from requests import Response
+from dataclasses import dataclass
+from httpx import AsyncClient, Response
 
 
+@dataclass
 class Result:
-    def __init__(self, success: bool):
-        self.success = success
+    success: bool = False
 
 
+@dataclass
 class Redirect(Result):
-    def __init__(self, url: str):
-        super().__init__(True)
-        self.url = url
+    url: str = ""
+    success: bool = True
 
 
 class Provider:
-    def __init__(self, response: Response):
+    def __init__(self, client: AsyncClient, response: Response):
+        self.client = client
         self.response = response
 
-    def run(self) -> Result:
+    async def run(self) -> Result:
         raise NotImplementedError()
 
     @staticmethod

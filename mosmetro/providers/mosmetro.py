@@ -1,11 +1,26 @@
-__ALL__ = ['AuthWifiRu', 'AuthWifiRuMsk', 'AuthWifiRuSpb']
-
-
+import logging
 from furl import furl
-from requests import Response
+from httpx import Response
+from pydantic import BaseModel, Field
 from .base import Provider, Result, Redirect
-from ..session import session as s
-from ..utils import any_redirect, merge_urls, safeget
+from ..utils import any_redirect, merge_urls
+
+
+class AuthStartData(BaseModel):
+    class SegmentParams(BaseModel):
+        class Common(BaseModel):
+            class RedirectUrl(BaseModel):
+                after_auth: str | None = Field(None, alias='afterAuth')
+
+            redirect_url: RedirectUrl | None = Field(None, alias='redirectUrl')
+
+        common: Common | None = None
+
+    segment_params: SegmentParams | None = Field(None, alias='segmentParams')
+
+
+class AuthCheckData(BaseModel):
+    auth_error_code: str | None = None
 
 
 class AuthWifiRu(Provider):
@@ -27,7 +42,7 @@ class AuthWifiRuMsk(Provider):
         url = furl(any_redirect(response))
         return url.host == 'auth.wi-fi.ru' and url.path in ['', '/', '/new']
 
-    def run(self) -> Result:
+    async def run(self) -> Result:
         url = furl(any_redirect(self.response))
 
         segment = url.args.get('segment') or 'metro'
@@ -35,47 +50,78 @@ class AuthWifiRuMsk(Provider):
         mac = url.args.get('client_mac') or url.args.get('mac')
 
         # Follow first redirect
-        print('Opening auth page')
-        res = s.get(url)
-        s.headers['referer'] = str(url)
+        logging.info('Opening auth page')
+        # self.client is available now
+        res = await self.client.get(str(url))
+        self.client.headers['referer'] = str(url)
 
         # Get auth page
-        print('Starting session')
+        logging.info('Starting session')
         url.args.clear()
         url.args['segment'] = segment
         if mac:
             url.args['clientMac'] = mac
         url.path = self.PATHS['start']
-        res = s.get(url)
 
-        after_auth = safeget(res.json(), 'data', 'segmentParams', 'common',
-                             'redirectUrl', 'afterAuth')
+        res = await self.client.get(str(url))
+
+        # Validation with Pydantic
+        try:
+            json_data = res.json()
+            # The structure wraps actual data in "data" key based on previous safeget usage
+            # safeget(res.json(), 'data', 'segmentParams', ...)
+            # So the root response has 'data'.
+
+            # Let's assume the response is { "data": ... }
+            # I will define a wrapper model or just parse manually if it's simple.
+            # The safeget usage: safeget(res.json(), 'data', 'segmentParams', 'common', 'redirectUrl', 'afterAuth')
+
+            class ResponseWrapper(BaseModel):
+                data: AuthStartData | None = None
+
+            parsed = ResponseWrapper.model_validate(json_data)
+
+            after_auth = None
+            if parsed.data and parsed.data.segment_params and parsed.data.segment_params.common and parsed.data.segment_params.common.redirect_url:
+                after_auth = parsed.data.segment_params.common.redirect_url.after_auth
+
+        except Exception as e:
+            logging.error(f"Failed to parse auth start response: {e}")
+            after_auth = None
+
         if after_auth:
-            print(f'Post-auth redirect: {after_auth}')
-            after_auth = merge_urls(self.response.request.url, after_auth)
+            logging.info(f'Post-auth redirect: {after_auth}')
+            after_auth = merge_urls(str(self.response.request.url), after_auth)
 
         # Send login form
-        print('Initializing connection')
+        logging.info('Initializing connection')
         url.path = self.PATHS['init']
         url.args.clear()
-        res = s.post(url, data={'mode': 0, 'segment': segment})
+        res = await self.client.post(str(url), data={'mode': 0, 'segment': segment})
         res_data = res.json()
-        print(res_data)
+        logging.debug(res_data)
 
-        error_code = safeget(res_data, 'auth_error_code', default='')
+        # safeget(res_data, 'auth_error_code', default='')
+        # Let's use Pydantic for this too.
+        try:
+            check_data = AuthCheckData.model_validate(res_data)
+            error_code = check_data.auth_error_code or ''
+        except Exception:
+            error_code = ''
+
         if error_code.startswith('err_device_not_identified'):
-            print('Error: Device is not registered. Please go to https://wi-fi.ru')
+            logging.error('Error: Device is not registered. Please go to https://wi-fi.ru')
             return Result(False)
 
         # Checking auth state
-        print('Checking connection')
+        logging.info('Checking connection')
         url.path = self.PATHS['check']
-        res = s.get(url)
+        res = await self.client.get(str(url))
         res_data = res.json()
-        print(res_data)
+        logging.debug(res_data)
 
         if after_auth:
-            return Redirect(after_auth)
+            return Redirect(url=after_auth)
         else:
             return Result(True)
 

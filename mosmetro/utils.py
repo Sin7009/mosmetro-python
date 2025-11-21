@@ -1,48 +1,20 @@
 import re
 from bs4.element import Tag
 from furl import furl, Path
-from requests import Response
+from httpx import Response
 from bs4 import BeautifulSoup as BS
-from typing import Dict, List, Any, Type, Union
-
-
-def safeget(data: Dict[Any, Any], *keys, default: Any = None) -> Any:
-    """Recursively and safely get a value from nested dictionaries."""
-    if not data:
-        return None
-
-    res = data
-
-    for key in keys:
-        if key in res:
-            res = res[key]
-        else:
-            return default
-
-    return res
-
-
-def all_subclasses(cls) -> List[Type]:
-    """Find all subclasses recursively."""
-    res = list()
-
-    for subcls in cls.__subclasses__():
-        res.append(subcls)
-        res.extend(all_subclasses(subcls))
-
-    return res
 
 
 def response_to_str(res: Response) -> str:
     return '\n'.join([
-        f'{res.status_code} {res.reason}',
+        f'{res.status_code} {res.reason_phrase}',
         '\n'.join(f'{name}: {value}' for name, value in res.headers.items()),
         '',
         res.text
     ])
 
 
-def merge_urls(base: Union[str, None], url: Union[str, None]) -> str:
+def merge_urls(base: str | None, url: str | None) -> str:
     u1 = furl(base)
     u2 = furl(url)
 
@@ -70,7 +42,7 @@ def merge_urls(base: Union[str, None], url: Union[str, None]) -> str:
 PATTERN_META_REDIR = re.compile('^[0-9]+[;,] ?(URL=|url=)?[\'"]?(.*?)[\'"]?$')
 
 
-def meta_redirect(res: Response) -> Union[str, None]:
+def meta_redirect(res: Response) -> str | None:
     soup = BS(res.content, features="html.parser")
     tag = soup.find('meta', attrs={'http-equiv': re.compile('refresh', re.I)})
 
@@ -83,12 +55,12 @@ def meta_redirect(res: Response) -> Union[str, None]:
     if not match:
         return None
 
-    return merge_urls(res.request.url, match.group(2))
+    return merge_urls(str(res.request.url), match.group(2))
 
 
-def any_redirect(res: Response) -> Union[str, None]:
+def any_redirect(res: Response) -> str | None:
     """Extract 3xx or meta redirect from Response."""
     if 'location' in res.headers:
-        return merge_urls(res.request.url, res.headers['location'])
+        return merge_urls(str(res.request.url), res.headers['location'])
 
     return meta_redirect(res)
