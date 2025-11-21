@@ -1,6 +1,7 @@
 import sys
 import logging
 import asyncio
+import warnings
 from httpx import AsyncClient
 from user_agent import generate_user_agent
 
@@ -16,6 +17,9 @@ async def main():
         format='%(asctime)s [%(levelname)s] %(message)s',
         level=logging.INFO
     )
+
+    # Suppress InsecureRequestWarning
+    warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
 
     logging.info(f'Version: {__version__}')
 
