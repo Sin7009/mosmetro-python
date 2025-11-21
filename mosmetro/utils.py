@@ -1,8 +1,9 @@
 import re
-from bs4.element import Tag
-from furl import furl, Path
-from httpx import Response
+
 from bs4 import BeautifulSoup as BS
+from bs4.element import Tag
+from furl import Path, furl
+from httpx import Response
 
 
 def response_to_str(res: Response) -> str:

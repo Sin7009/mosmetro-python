@@ -1,10 +1,13 @@
 import logging
+
 from furl import furl
 from httpx import Response
 from pydantic import BaseModel, Field
-from .base import Provider, Result, Redirect
-from ..utils import any_redirect, merge_urls
+
 from ..config import settings
+from ..exceptions import DeviceNotRegisteredError
+from ..utils import any_redirect, merge_urls
+from .base import Provider, Redirect, Result
 
 
 class AuthStartData(BaseModel):
@@ -69,14 +72,6 @@ class AuthWifiRuMsk(Provider):
         # Validation with Pydantic
         try:
             json_data = res.json()
-            # The structure wraps actual data in "data" key based on previous safeget usage
-            # safeget(res.json(), 'data', 'segmentParams', ...)
-            # So the root response has 'data'.
-
-            # Let's assume the response is { "data": ... }
-            # I will define a wrapper model or just parse manually if it's simple.
-            # The safeget usage: safeget(res.json(), 'data', 'segmentParams', 'common', 'redirectUrl', 'afterAuth')
-
             class ResponseWrapper(BaseModel):
                 data: AuthStartData | None = None
 
@@ -102,8 +97,6 @@ class AuthWifiRuMsk(Provider):
         res_data = res.json()
         logging.debug(res_data)
 
-        # safeget(res_data, 'auth_error_code', default='')
-        # Let's use Pydantic for this too.
         try:
             check_data = AuthCheckData.model_validate(res_data)
             error_code = check_data.auth_error_code or ''
@@ -111,8 +104,7 @@ class AuthWifiRuMsk(Provider):
             error_code = ''
 
         if error_code.startswith('err_device_not_identified'):
-            logging.error('Error: Device is not registered. Please go to https://wi-fi.ru')
-            return Result(False)
+            raise DeviceNotRegisteredError('Error: Device is not registered. Please go to https://wi-fi.ru')
 
         # Checking auth state
         logging.info('Checking connection')

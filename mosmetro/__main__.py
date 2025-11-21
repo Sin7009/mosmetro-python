@@ -1,64 +1,102 @@
-import sys
-import logging
 import asyncio
+import logging
+import sys
 import warnings
+
+import typer
 from httpx import AsyncClient
+from rich.console import Console
+from rich.logging import RichHandler
 from user_agent import generate_user_agent
 
 from . import __version__
+from .connect import connect
+from .exceptions import MosMetroError
 from .gen204 import Gen204
 from .providers import AVAILABLE_PROVIDERS
-from .connect import connect
-from .config import settings
 
+# Suppress SSL Warnings
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-async def main():
-    logging.basicConfig(
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        level=logging.INFO
-    )
+# Initialize Typer app and Rich console
+app = typer.Typer(help="Moscow Metro Wi-Fi CLI", add_completion=False)
+console = Console()
 
-    # Suppress InsecureRequestWarning
-    warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
+# Configure logging to use Rich
+logging.basicConfig(
+    level="INFO",
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)]
+)
 
-    logging.info(f'Version: {__version__}')
+logger = logging.getLogger("mosmetro")
 
-    logging.info('Loaded providers: ' +
-          ', '.join(p.__name__ for p in AVAILABLE_PROVIDERS))
+async def do_login(debug: bool):
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
-    # Use AsyncClient
+    logger.info(f'Version: {__version__}')
+    logger.info('Loaded providers: ' + ', '.join(p.__name__ for p in AVAILABLE_PROVIDERS))
+
     async with AsyncClient(verify=False) as client:
         client.headers['user-agent'] = generate_user_agent()
 
-        # Optional: User-Agent rotation logic could be added here or in a loop if we had a daemon mode.
-        # For a single run, one UA is fine, but the instructions said: "Rotate User-Agent... if session lives long".
-        # Since this script seems to run once and exit, generating one at start is fine.
-        # But if we want to be robust, we can regenerate it if we retry?
-        # The retry logic is in `connect`.
-        # To implement UA rotation on retry, we would need to hook into the retry mechanism or just regenerate it before `connect`.
-
-        logging.info('Checking connection...')
-        res204 = await Gen204.check(client)
+        logger.info('Checking connection...')
+        try:
+            res204 = await Gen204.check(client)
+        except Exception as e:
+             logger.error(f"Error checking connection: {e}")
+             sys.exit(1)
 
         if res204.is_connected:
-            logging.info('Already connected')
-            sys.exit(0)
+            logger.info('Already connected')
+            return
 
         if not res204.response:
-            logging.error('Error: Unable to get initial redirect')
+            logger.error('Error: Unable to get initial redirect')
             sys.exit(1)
 
         try:
             if await connect(client, res204.response):
-                logging.info("Connected successfully! :3")
-                sys.exit(0)
+                logger.info("Connected successfully! :3")
             else:
-                logging.info("Connection failed :(")
+                logger.info("Connection failed :(")
                 sys.exit(1)
+        except MosMetroError as e:
+             logger.error(f"Connection failed: {e}")
+             sys.exit(1)
         except Exception as e:
-             logging.error(f"Connection process failed with error: {e}")
+             logger.exception(f"Unexpected error: {e}")
              sys.exit(1)
 
+@app.command(name="login")
+def login_cmd(
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
+):
+    """
+    Attempt to log in to the Wi-Fi network.
+    """
+    asyncio.run(do_login(debug))
+
+@app.command(name="status")
+def status_cmd(
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
+):
+    """
+    Check the current connection status.
+    """
+    async def check_status():
+         if debug:
+            logger.setLevel(logging.DEBUG)
+         async with AsyncClient(verify=False) as client:
+             res = await Gen204.check(client)
+             if res.is_connected:
+                 console.print("[bold green]Connected[/bold green]")
+             else:
+                 console.print("[bold red]Disconnected[/bold red]")
+
+    asyncio.run(check_status())
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    app()

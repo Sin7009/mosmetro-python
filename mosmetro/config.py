@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class Gen204Config(BaseModel):
     default_urls: list[str] = [
         'connectivitycheck.gstatic.com/generate_204',

@@ -1,12 +1,18 @@
 import logging
-from httpx import Response, AsyncClient, RequestError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from httpx import AsyncClient, RequestError, Response
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from .config import settings
+from .gen204 import Gen204
 from .providers import match as match_provider
 from .providers.base import Redirect
-from .gen204 import Gen204
 from .utils import any_redirect, response_to_str
-from .config import settings
 
 
 @retry(

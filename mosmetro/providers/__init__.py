@@ -1,9 +1,11 @@
-from httpx import Response, AsyncClient
+from httpx import AsyncClient, Response
+
 from .base import Provider
 from .mosmetro import AuthWifiRu, AuthWifiRuMsk, AuthWifiRuSpb
 
 AVAILABLE_PROVIDERS = [AuthWifiRu, AuthWifiRuMsk, AuthWifiRuSpb]
 
+AVAILABLE_PROVIDERS = [AuthWifiRu, AuthWifiRuMsk, AuthWifiRuSpb]
 
 def match(client: AsyncClient, response: Response) -> Provider | None:
     for subcls in AVAILABLE_PROVIDERS:
