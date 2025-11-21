@@ -4,6 +4,7 @@ from httpx import Response
 from pydantic import BaseModel, Field
 from .base import Provider, Result, Redirect
 from ..utils import any_redirect, merge_urls
+from ..config import settings
 
 
 class AuthStartData(BaseModel):
@@ -52,7 +53,7 @@ class AuthWifiRuMsk(Provider):
         # Follow first redirect
         logging.info('Opening auth page')
         # self.client is available now
-        res = await self.client.get(str(url))
+        res = await self.client.get(str(url), timeout=settings.timeout)
         self.client.headers['referer'] = str(url)
 
         # Get auth page
@@ -63,7 +64,7 @@ class AuthWifiRuMsk(Provider):
             url.args['clientMac'] = mac
         url.path = self.PATHS['start']
 
-        res = await self.client.get(str(url))
+        res = await self.client.get(str(url), timeout=settings.timeout)
 
         # Validation with Pydantic
         try:
@@ -97,7 +98,7 @@ class AuthWifiRuMsk(Provider):
         logging.info('Initializing connection')
         url.path = self.PATHS['init']
         url.args.clear()
-        res = await self.client.post(str(url), data={'mode': 0, 'segment': segment})
+        res = await self.client.post(str(url), data={'mode': 0, 'segment': segment}, timeout=settings.timeout)
         res_data = res.json()
         logging.debug(res_data)
 
@@ -116,7 +117,7 @@ class AuthWifiRuMsk(Provider):
         # Checking auth state
         logging.info('Checking connection')
         url.path = self.PATHS['check']
-        res = await self.client.get(str(url))
+        res = await self.client.get(str(url), timeout=settings.timeout)
         res_data = res.json()
         logging.debug(res_data)
 
