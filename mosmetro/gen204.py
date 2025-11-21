@@ -1,14 +1,18 @@
+import asyncio
+import logging
 import random
-from typing import List
-from requests import Response, RequestException
-from requests.exceptions import SSLError
-from .session import session as s
+from dataclasses import dataclass
+
+from httpx import AsyncClient, RequestError, Response, TimeoutException
+
+from .config import settings
+from .exceptions import NetworkError, NetworkTimeoutError
 
 
+@dataclass
 class Gen204Res:
-    def __init__(self, response: Response = None, false_negative: Response = None):
-        self.response = response
-        self.false_negative = false_negative
+    response: Response | None = None
+    false_negative: Response | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -19,92 +23,76 @@ class Gen204Res:
 
 
 class Gen204:
-    URL_DEFAULT = [
-        'connectivitycheck.gstatic.com/generate_204',
-        'www.gstatic.com/generate_204',
-        'connectivitycheck.android.com/generate_204',
-        'play.googleapis.com/generate_204',
-        'clients1.google.com/generate_204'
-    ]
-
-    URL_RELIABLE = [
-        'www.google.ru/generate_204',
-        'www.google.ru/gen_204',
-        'google.com/generate_204',
-        'gstatic.com/generate_204',
-        'maps.google.com/generate_204',
-        'mt0.google.com/generate_204',
-        'mt1.google.com/generate_204',
-        'mt2.google.com/generate_204',
-        'mt3.google.com/generate_204',
-        'www.google.com/generate_204',
-    ]
-
     @staticmethod
-    def request(schema: str, urls: List[str]) -> Response:
-        res = None
+    async def request(client: AsyncClient, schema: str, urls: list[str]) -> Response:
         last_ex = None
 
-        for base_url in random.choices(urls, k=3):
-            url = f'{schema}://{base_url}'
+        selected_urls = random.choices(urls, k=3)
+        tasks = []
 
+        for base_url in selected_urls:
+            url = f'{schema}://{base_url}'
+            tasks.append(asyncio.create_task(Gen204._fetch(client, url)))
+
+        for task in asyncio.as_completed(tasks):
             try:
-                res = s.get(url, allow_redirects=False)
-                last_ex = None
-                print(f'Gen204 | {url} | {res.status_code}')
-                break
-            except SSLError as ex:
-                print(f'Gen204 | {url} | {ex}')
+                res = await task
+                if res.status_code == 204 or res.is_redirect:
+                    return res
+                return res
+
+            except (RequestError, NetworkError) as ex:
                 last_ex = ex
-                break
-            except RequestException as ex:
-                print(f'Gen204 | {url} | {ex}')
-                last_ex = ex
+                continue
 
         if last_ex:
             raise last_ex
 
-        return res
+        raise NetworkError("All Gen204 requests failed")
 
     @staticmethod
-    def check() -> Gen204Res:
-        """Returns gen204 response and false negative (if exists)."""
-        # Unreliable HTTP check (needs to be verified by HTTPS)
+    async def _fetch(client: AsyncClient, url: str) -> Response:
+        logging.debug(f'Gen204 requesting {url}')
         try:
-            unrel = Gen204.request("http", Gen204.URL_DEFAULT)
-        except RequestException:
-            # network is most probably unreachable
+            res = await client.get(url, follow_redirects=False, timeout=settings.timeout)
+            logging.debug(f'Gen204 | {url} | {res.status_code}')
+            return res
+        except TimeoutException as e:
+            logging.debug(f'Gen204 | {url} | Timeout: {e}')
+            raise NetworkTimeoutError(f"Timeout connecting to {url}") from e
+        except RequestError as e:
+            logging.debug(f'Gen204 | {url} | {e}')
+            raise NetworkError(f"Failed to connect to {url}") from e
+
+    @staticmethod
+    async def check(client: AsyncClient) -> Gen204Res:
+        """Returns gen204 response and false negative (if exists)."""
+        try:
+            unrel = await Gen204.request(client, "http", settings.gen204.default_urls)
+        except (RequestError, NetworkError):
             return Gen204Res()
 
-        # Reliable HTTPS check
         try:
-            rel_https = Gen204.request("https", Gen204.URL_RELIABLE)
-        except RequestException:
+            rel_https = await Gen204.request(client, "https", settings.gen204.reliable_urls)
+        except (RequestError, NetworkError):
             rel_https = None
 
         if unrel.status_code == 204:
             if not rel_https or rel_https.status_code != 204:
-                # Reliable HTTP check
                 try:
-                    rel_http = Gen204.request("http", Gen204.URL_RELIABLE)
-                except RequestException:
+                    rel_http = await Gen204.request(client, "http", settings.gen204.reliable_urls)
+                except (RequestError, NetworkError):
                     rel_http = None
 
                 if rel_http and rel_http.status_code != 204:
-                    return Gen204Res(rel_http)  # false positive
+                    return Gen204Res(rel_http)
             else:
-                return Gen204Res(rel_https)  # confirmed positive
+                return Gen204Res(rel_https)
         else:
             if not rel_https:
-                return Gen204Res(unrel)  # confirmed negative
+                return Gen204Res(unrel)
             elif rel_https.status_code == 204:
-                return Gen204Res(rel_https, unrel)  # false negative
+                return Gen204Res(rel_https, unrel)
 
-        print('Gen204 | Unexpected state')
+        logging.warning('Gen204 | Unexpected state')
         return Gen204Res()
-
-
-if __name__ == '__main__':
-    res_204 = Gen204.check()
-    print(f'Connected: {res_204.is_connected}')
-    print(f'False negative: {res_204.false_negative is not None}')
